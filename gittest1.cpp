@@ -6,7 +6,7 @@ int main() {
     cout<< "Current number is git number : "<< i <<endl;
   }*/
 
-  cout<< "KOLOI YA SELAHLA YA NGE SENYENTSA BOPHELO"<<endl;
+  cout<< "KOLOI YA SELAHLA YA NGE SENYENTSA BOPHELO,fff"<<endl;
 
 
 
