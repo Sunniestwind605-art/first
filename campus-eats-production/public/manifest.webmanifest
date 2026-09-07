@@ -1,0 +1,10 @@
+{
+  "name": "Campus Eats",
+  "short_name": "Campus Eats",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#EFE9DA",
+  "theme_color": "#1F3823",
+  "description": "Campus Eats ordering and delivery notifications for Wits Main Campus."
+}
