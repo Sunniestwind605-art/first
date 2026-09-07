@@ -33,9 +33,9 @@ app.use((req,res,next)=>{
 });
 app.use(express.json({limit:'256kb'}));
 
-const apiLimiter=rateLimit({windowMs:15*60*1000,limit:300,standardHeaders:true,legacyHeaders:false});
-const authLimiter=rateLimit({windowMs:15*60*1000,limit:40,standardHeaders:true,legacyHeaders:false});
-const inviteLimiter=rateLimit({windowMs:5*60*1000,limit:40,standardHeaders:true,legacyHeaders:false});
+const apiLimiter=rateLimit({windowMs:15*60*1000,limit:300,standardHeaders:'draft-8',legacyHeaders:false});
+const authLimiter=rateLimit({windowMs:15*60*1000,limit:40,standardHeaders:'draft-8',legacyHeaders:false});
+const inviteLimiter=rateLimit({windowMs:5*60*1000,limit:40,standardHeaders:'draft-8',legacyHeaders:false});
 app.use('/api',apiLimiter);
 app.use('/api/auth',authLimiter);
 app.use('/api/staff/invite',inviteLimiter);
@@ -51,7 +51,11 @@ app.use('/api/auth',authRoutes);
 app.use('/api/orders',orderRoutes);
 app.use('/api/staff',staffRoutes);
 app.use(express.static(path.join(__dirname,'..','public'),{dotfiles:'deny',index:'index.html',maxAge:process.env.NODE_ENV==='production'?'5m':0}));
-app.get('*',(req,res)=>{if(req.path.startsWith('/api/'))return res.status(404).json({error:'Not found'});res.sendFile(path.join(__dirname,'..','public','index.html'));});
+app.use((req,res,next)=>{
+  if(req.path.startsWith('/api/'))return res.status(404).json({error:'Not found'});
+  if(req.method!=='GET'&&req.method!=='HEAD')return next();
+  res.sendFile(path.join(__dirname,'..','public','index.html'));
+});
 app.use((err,req,res,_next)=>{console.error('Unhandled error',err);res.status(500).json({error:'Internal server error'});});
 
 const PORT=process.env.PORT||4000;
