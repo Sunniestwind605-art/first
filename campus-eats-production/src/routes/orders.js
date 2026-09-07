@@ -11,8 +11,6 @@ router.post('/',verifyToken,requireCustomer,async(req,res)=>{
   if(paymentMethod&&!['cash','bank_transfer'].includes(paymentMethod))return res.status(400).json({error:'Invalid payment method'});
   for(const i of items){if(!i.menuItemId||!Number.isInteger(i.quantity)||i.quantity<=0)return res.status(400).json({error:'Invalid item payload'});}
   try{
-    const verified=await pool.query('SELECT phone_verified_at FROM customers WHERE id=$1',[req.user.id]);
-    if(!verified.rows[0]?.phone_verified_at)return res.status(403).json({error:'Verify your WhatsApp number before placing an order'});
     const order=await withTransaction(async client=>{
       const br=await client.query("SELECT id,name FROM buildings WHERE id=$1 AND is_active=TRUE AND campus_zone='Braamfontein Main Campus'",[buildingId]);
       if(!br.rowCount){const e=new Error('Delivery is currently limited to Wits Braamfontein Main Campus');e.statusCode=400;throw e;}
