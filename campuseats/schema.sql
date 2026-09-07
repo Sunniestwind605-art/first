@@ -1,0 +1,86 @@
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
+CREATE TABLE IF NOT EXISTS buildings (
+ id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+ name VARCHAR(120) NOT NULL UNIQUE,
+ campus_zone VARCHAR(80),
+ est_minutes INTEGER NOT NULL DEFAULT 10,
+ is_active BOOLEAN NOT NULL DEFAULT TRUE,
+ created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS customers (
+ id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+ full_name VARCHAR(150) NOT NULL,
+ email VARCHAR(150) UNIQUE,
+ phone VARCHAR(30) NOT NULL UNIQUE,
+ password_hash TEXT NOT NULL,
+ building_id UUID REFERENCES buildings(id),
+ room_number VARCHAR(120),
+ created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_customers_email ON customers(email);
+CREATE INDEX IF NOT EXISTS idx_customers_phone ON customers(phone);
+
+CREATE TABLE IF NOT EXISTS staff (
+ id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+ full_name VARCHAR(150) NOT NULL,
+ email VARCHAR(150) NOT NULL UNIQUE,
+ phone VARCHAR(30) NOT NULL,
+ password_hash TEXT NOT NULL,
+ role VARCHAR(20) NOT NULL DEFAULT 'runner' CHECK (role IN ('runner','dispatch','admin')),
+ is_active BOOLEAN NOT NULL DEFAULT TRUE,
+ created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS menu_items (
+ id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+ name VARCHAR(150) NOT NULL UNIQUE,
+ description TEXT,
+ price_cents INTEGER NOT NULL CHECK (price_cents >= 0),
+ is_available BOOLEAN NOT NULL DEFAULT TRUE,
+ created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS orders (
+ id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+ customer_id UUID NOT NULL REFERENCES customers(id),
+ building_id UUID NOT NULL REFERENCES buildings(id),
+ room_number VARCHAR(120),
+ subtotal_cents INTEGER NOT NULL CHECK (subtotal_cents >= 0),
+ fee_cents INTEGER NOT NULL CHECK (fee_cents >= 0),
+ total_cents INTEGER NOT NULL CHECK (total_cents >= 0),
+ payment_method VARCHAR(20) NOT NULL DEFAULT 'cash' CHECK (payment_method IN ('cash','bank_transfer')),
+ status VARCHAR(20) NOT NULL DEFAULT 'pending',
+ accepted_by_staff_id UUID REFERENCES staff(id),
+ accepted_at TIMESTAMPTZ,
+ delivered_at TIMESTAMPTZ,
+ cancelled_at TIMESTAMPTZ,
+ cancel_reason VARCHAR(120),
+ created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+ updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
+CREATE INDEX IF NOT EXISTS idx_orders_created_at ON orders(created_at);
+CREATE INDEX IF NOT EXISTS idx_orders_customer ON orders(customer_id);
+
+DO $$ BEGIN
+  ALTER TABLE orders DROP CONSTRAINT IF EXISTS orders_status_check;
+  ALTER TABLE orders ADD CONSTRAINT orders_status_check CHECK (status IN ('pending','accepted','processing','ready','delivering','delivered','cancelled'));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+CREATE OR REPLACE FUNCTION set_updated_at() RETURNS TRIGGER AS $$
+BEGIN NEW.updated_at = now(); RETURN NEW; END; $$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_orders_updated_at ON orders;
+CREATE TRIGGER trg_orders_updated_at BEFORE UPDATE ON orders FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE TABLE IF NOT EXISTS order_items (
+ id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+ order_id UUID NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+ menu_item_id UUID NOT NULL REFERENCES menu_items(id),
+ item_name VARCHAR(150) NOT NULL,
+ unit_price_cents INTEGER NOT NULL CHECK (unit_price_cents >= 0),
+ quantity INTEGER NOT NULL CHECK (quantity > 0),
+ line_total_cents INTEGER NOT NULL CHECK (line_total_cents >= 0)
+);
+CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id);
