@@ -7,7 +7,6 @@ ALTER TABLE customers ADD COLUMN IF NOT EXISTS verification_code_hash TEXT;
 ALTER TABLE customers ADD COLUMN IF NOT EXISTS verification_expires_at TIMESTAMPTZ;
 ALTER TABLE customers ADD COLUMN IF NOT EXISTS verification_sent_at TIMESTAMPTZ;
 ALTER TABLE customers ADD COLUMN IF NOT EXISTS verification_attempts INTEGER NOT NULL DEFAULT 0;
--- Legacy WhatsApp fields are retained during migration so existing rows are not destructively altered.
 ALTER TABLE customers ADD COLUMN IF NOT EXISTS whatsapp_opt_in BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE customers ADD COLUMN IF NOT EXISTS phone_verified_at TIMESTAMPTZ;
 CREATE TABLE IF NOT EXISTS staff (id UUID PRIMARY KEY DEFAULT gen_random_uuid(),full_name VARCHAR(150) NOT NULL,email VARCHAR(150) NOT NULL UNIQUE,phone VARCHAR(30) NOT NULL,password_hash TEXT NOT NULL,role VARCHAR(20) NOT NULL DEFAULT 'runner' CHECK (role IN ('runner','dispatch','admin')),is_active BOOLEAN NOT NULL DEFAULT TRUE,created_at TIMESTAMPTZ NOT NULL DEFAULT now());
@@ -22,6 +21,21 @@ CREATE OR REPLACE FUNCTION set_updated_at() RETURNS TRIGGER AS $$ BEGIN NEW.upda
 CREATE TABLE IF NOT EXISTS order_items (id UUID PRIMARY KEY DEFAULT gen_random_uuid(),order_id UUID NOT NULL REFERENCES orders(id) ON DELETE CASCADE,menu_item_id UUID NOT NULL REFERENCES menu_items(id),item_name VARCHAR(150) NOT NULL,unit_price_cents INTEGER NOT NULL CHECK (unit_price_cents >= 0),quantity INTEGER NOT NULL CHECK (quantity > 0),line_total_cents INTEGER NOT NULL CHECK (line_total_cents >= 0)); CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id);
 CREATE TABLE IF NOT EXISTS staff_order_invites (id UUID PRIMARY KEY DEFAULT gen_random_uuid(),order_id UUID NOT NULL REFERENCES orders(id) ON DELETE CASCADE,staff_id UUID NOT NULL REFERENCES staff(id) ON DELETE CASCADE,token_hash TEXT NOT NULL UNIQUE,expires_at TIMESTAMPTZ NOT NULL,used_at TIMESTAMPTZ,created_at TIMESTAMPTZ NOT NULL DEFAULT now(),UNIQUE(order_id,staff_id)); CREATE INDEX IF NOT EXISTS idx_staff_order_invites_token ON staff_order_invites(token_hash);
 CREATE TABLE IF NOT EXISTS order_status_events (id UUID PRIMARY KEY DEFAULT gen_random_uuid(),order_id UUID NOT NULL REFERENCES orders(id) ON DELETE CASCADE,status VARCHAR(20) NOT NULL,changed_by_staff_id UUID REFERENCES staff(id),created_at TIMESTAMPTZ NOT NULL DEFAULT now()); CREATE INDEX IF NOT EXISTS idx_order_status_events_order ON order_status_events(order_id,created_at);
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  customer_id UUID REFERENCES customers(id) ON DELETE CASCADE,
+  staff_id UUID REFERENCES staff(id) ON DELETE CASCADE,
+  endpoint TEXT NOT NULL UNIQUE,
+  p256dh TEXT NOT NULL,
+  auth_key TEXT NOT NULL,
+  user_agent TEXT,
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CHECK ((customer_id IS NOT NULL)::int + (staff_id IS NOT NULL)::int = 1)
+);
+CREATE INDEX IF NOT EXISTS idx_push_customer ON push_subscriptions(customer_id) WHERE is_active=TRUE;
+CREATE INDEX IF NOT EXISTS idx_push_staff ON push_subscriptions(staff_id) WHERE is_active=TRUE;
+CREATE TABLE IF NOT EXISTS push_notifications (id UUID PRIMARY KEY DEFAULT gen_random_uuid(),recipient_type VARCHAR(20) NOT NULL,recipient_id UUID NOT NULL,title VARCHAR(160) NOT NULL,status VARCHAR(30) NOT NULL,error_message TEXT,created_at TIMESTAMPTZ NOT NULL DEFAULT now()); CREATE INDEX IF NOT EXISTS idx_push_notifications_created ON push_notifications(created_at DESC);
 CREATE TABLE IF NOT EXISTS email_notifications (id UUID PRIMARY KEY DEFAULT gen_random_uuid(),recipient_email VARCHAR(254) NOT NULL,subject VARCHAR(255) NOT NULL,status VARCHAR(30) NOT NULL,provider_message_id TEXT,error_message TEXT,created_at TIMESTAMPTZ NOT NULL DEFAULT now()); CREATE INDEX IF NOT EXISTS idx_email_notifications_created ON email_notifications(created_at DESC);
--- Legacy table retained for rollback/history only; production notification code no longer writes to it.
 CREATE TABLE IF NOT EXISTS whatsapp_notifications (id UUID PRIMARY KEY DEFAULT gen_random_uuid(),recipient_phone VARCHAR(30) NOT NULL,template_name VARCHAR(120) NOT NULL,payload_json JSONB NOT NULL DEFAULT '{}'::jsonb,status VARCHAR(20) NOT NULL,provider_message_id TEXT,error_message TEXT,created_at TIMESTAMPTZ NOT NULL DEFAULT now());
