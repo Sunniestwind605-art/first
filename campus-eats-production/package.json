@@ -1,6 +1,6 @@
 {
   "name": "campuseats-fullstack-demo",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "private": true,
   "description": "Campus Eats production-ready Wits Main Campus ordering platform",
   "main": "src/server.js",
@@ -14,7 +14,7 @@
     "bcryptjs": "3.0.3",
     "cors": "2.8.6",
     "dotenv": "17.4.2",
-    "express": "4.22.2",
+    "express": "5.2.1",
     "express-rate-limit": "8.7.0",
     "jsonwebtoken": "9.0.3",
     "node-cron": "4.6.0",
