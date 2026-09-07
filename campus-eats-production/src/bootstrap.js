@@ -11,10 +11,20 @@ async function applySchema() {
   console.log('[bootstrap] schema ready');
 }
 
+function loadJsonEnv(name, fallback) {
+  try { return JSON.parse(process.env[name] || JSON.stringify(fallback)); }
+  catch (e) { console.error(`[bootstrap] invalid ${name}`); return fallback; }
+}
+
 function loadStaffDirectory() {
-  const raw = process.env.STAFF_DIRECTORY_JSON || '[]';
-  try { const rows = JSON.parse(raw); return Array.isArray(rows) ? rows : []; }
-  catch (e) { console.error('[bootstrap] invalid STAFF_DIRECTORY_JSON'); return []; }
+  const rows = loadJsonEnv('STAFF_DIRECTORY_JSON', []);
+  return Array.isArray(rows) ? rows : [];
+}
+
+function loadStaffEmailMap() {
+  const raw = loadJsonEnv('STAFF_EMAIL_MAP_JSON', {});
+  if (!raw || Array.isArray(raw) || typeof raw !== 'object') return {};
+  return Object.fromEntries(Object.entries(raw).map(([name,email]) => [String(name).trim().toLowerCase(), String(email||'').trim().toLowerCase()]));
 }
 
 async function seedData() {
@@ -26,10 +36,13 @@ async function seedData() {
   for (const item of menu) await pool.query(`INSERT INTO menu_items(name,description,price_cents,is_available) VALUES($1,$2,$3,TRUE) ON CONFLICT(name) DO UPDATE SET description=EXCLUDED.description,price_cents=EXCLUDED.price_cents`,[item.name,item.description,item.price_cents]);
 
   const directory = loadStaffDirectory();
+  const emailMap = loadStaffEmailMap();
   for (const [idx, member] of directory.entries()) {
-    const name=String(member.name||'').trim(), phone=normalizePhone(member.phone), suppliedEmail=String(member.email||'').trim().toLowerCase();
+    const name=String(member.name||'').trim(), phone=normalizePhone(member.phone);
     if(!name||!phone) continue;
-    const hasRealEmail=/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(suppliedEmail);
+    const mappedEmail=emailMap[name.toLowerCase()];
+    const suppliedEmail=String(mappedEmail || member.email || '').trim().toLowerCase();
+    const hasRealEmail=/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(suppliedEmail) && !suppliedEmail.endsWith('@staff.campuseats.local');
     const email=hasRealEmail?suppliedEmail:`${name.toLowerCase().replace(/[^a-z0-9]+/g,'.')}@staff.campuseats.local`;
     const passwordHash=await bcrypt.hash(`managed-staff-${idx}-${process.env.JWT_SECRET||'campus-eats'}`,12);
     await pool.query(`INSERT INTO staff(full_name,email,phone,password_hash,role,is_active,email_enabled,whatsapp_enabled)
