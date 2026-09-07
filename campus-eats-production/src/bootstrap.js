@@ -13,51 +13,35 @@ async function applySchema() {
 
 function loadStaffDirectory() {
   const raw = process.env.STAFF_DIRECTORY_JSON || '[]';
-  try {
-    const rows = JSON.parse(raw);
-    return Array.isArray(rows) ? rows : [];
-  } catch (e) {
-    console.error('[bootstrap] invalid STAFF_DIRECTORY_JSON');
-    return [];
-  }
+  try { const rows = JSON.parse(raw); return Array.isArray(rows) ? rows : []; }
+  catch (e) { console.error('[bootstrap] invalid STAFF_DIRECTORY_JSON'); return []; }
 }
 
 async function seedData() {
   if ((process.env.AUTO_SEED || 'true').toLowerCase() !== 'true') return;
-
   const buildings = JSON.parse(fs.readFileSync(path.join(__dirname,'..','seed-buildings.json'),'utf8'));
   await pool.query(`UPDATE buildings SET is_active=FALSE`);
-  for (const name of buildings) {
-    await pool.query(`INSERT INTO buildings(name, campus_zone, est_minutes, is_active)
-      VALUES($1,'Braamfontein Main Campus',10,TRUE)
-      ON CONFLICT(name) DO UPDATE SET campus_zone=EXCLUDED.campus_zone, is_active=TRUE`, [name]);
-  }
-
+  for (const name of buildings) await pool.query(`INSERT INTO buildings(name,campus_zone,est_minutes,is_active) VALUES($1,'Braamfontein Main Campus',10,TRUE) ON CONFLICT(name) DO UPDATE SET campus_zone=EXCLUDED.campus_zone,is_active=TRUE`,[name]);
   const menu = JSON.parse(fs.readFileSync(path.join(__dirname,'..','seed-menu.json'),'utf8'));
-  for (const item of menu) {
-    await pool.query(`INSERT INTO menu_items(name,description,price_cents,is_available) VALUES($1,$2,$3,TRUE)
-      ON CONFLICT(name) DO UPDATE SET description=EXCLUDED.description, price_cents=EXCLUDED.price_cents`, [item.name,item.description,item.price_cents]);
-  }
+  for (const item of menu) await pool.query(`INSERT INTO menu_items(name,description,price_cents,is_available) VALUES($1,$2,$3,TRUE) ON CONFLICT(name) DO UPDATE SET description=EXCLUDED.description,price_cents=EXCLUDED.price_cents`,[item.name,item.description,item.price_cents]);
 
   const directory = loadStaffDirectory();
   for (const [idx, member] of directory.entries()) {
-    const name = String(member.name || '').trim();
-    const phone = normalizePhone(member.phone);
-    if (!name || !phone) continue;
-    const email = String(member.email || `${name.toLowerCase().replace(/[^a-z0-9]+/g,'.')}@staff.campuseats.local`).toLowerCase();
-    const passwordHash = await bcrypt.hash(`managed-staff-${idx}-${process.env.JWT_SECRET || 'campus-eats'}`, 12);
-    await pool.query(`INSERT INTO staff(full_name,email,phone,password_hash,role,is_active,whatsapp_enabled)
-      VALUES($1,$2,$3,$4,$5,TRUE,TRUE)
-      ON CONFLICT(phone) DO UPDATE SET full_name=EXCLUDED.full_name,email=EXCLUDED.email,role=EXCLUDED.role,is_active=TRUE,whatsapp_enabled=TRUE`,
-      [name,email,phone,passwordHash,member.role || 'runner']);
+    const name=String(member.name||'').trim(), phone=normalizePhone(member.phone), suppliedEmail=String(member.email||'').trim().toLowerCase();
+    if(!name||!phone) continue;
+    const hasRealEmail=/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(suppliedEmail);
+    const email=hasRealEmail?suppliedEmail:`${name.toLowerCase().replace(/[^a-z0-9]+/g,'.')}@staff.campuseats.local`;
+    const passwordHash=await bcrypt.hash(`managed-staff-${idx}-${process.env.JWT_SECRET||'campus-eats'}`,12);
+    await pool.query(`INSERT INTO staff(full_name,email,phone,password_hash,role,is_active,email_enabled,whatsapp_enabled)
+      VALUES($1,$2,$3,$4,$5,TRUE,$6,FALSE)
+      ON CONFLICT(phone) DO UPDATE SET full_name=EXCLUDED.full_name,email=EXCLUDED.email,role=EXCLUDED.role,is_active=TRUE,email_enabled=EXCLUDED.email_enabled,whatsapp_enabled=FALSE`,
+      [name,email,phone,passwordHash,member.role||'runner',hasRealEmail]);
   }
 
-  const demoPasswordHash = await bcrypt.hash('demo-not-used-directly', 12);
-  await pool.query(`INSERT INTO staff(full_name,email,phone,password_hash,role,is_active,whatsapp_enabled)
-    VALUES('Campus Eats Demo Staff','demo.staff@campuseats.local','27000000000',$1,'admin',TRUE,FALSE)
-    ON CONFLICT(email) DO UPDATE SET is_active=TRUE`, [demoPasswordHash]);
-
+  const demoPasswordHash=await bcrypt.hash('demo-not-used-directly',12);
+  await pool.query(`INSERT INTO staff(full_name,email,phone,password_hash,role,is_active,email_enabled,whatsapp_enabled)
+    VALUES('Campus Eats Demo Staff','demo.staff@campuseats.local','27000000000',$1,'admin',TRUE,FALSE,FALSE)
+    ON CONFLICT(email) DO UPDATE SET is_active=TRUE,email_enabled=FALSE,whatsapp_enabled=FALSE`,[demoPasswordHash]);
   console.log(`[bootstrap] seeded ${buildings.length} active main-campus locations, ${menu.length} menu items, ${directory.length} configured staff`);
 }
-
-module.exports = { applySchema, seedDemoData: seedData, seedData };
+module.exports={applySchema,seedDemoData:seedData,seedData};
