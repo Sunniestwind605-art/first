@@ -15,12 +15,37 @@ ALTER TABLE staff ADD COLUMN IF NOT EXISTS whatsapp_enabled BOOLEAN NOT NULL DEF
 CREATE UNIQUE INDEX IF NOT EXISTS idx_staff_phone_unique ON staff(phone);
 CREATE TABLE IF NOT EXISTS menu_items (id UUID PRIMARY KEY DEFAULT gen_random_uuid(),name VARCHAR(150) NOT NULL UNIQUE,description TEXT,price_cents INTEGER NOT NULL CHECK (price_cents >= 0),is_available BOOLEAN NOT NULL DEFAULT TRUE,created_at TIMESTAMPTZ NOT NULL DEFAULT now());
 CREATE TABLE IF NOT EXISTS orders (id UUID PRIMARY KEY DEFAULT gen_random_uuid(),customer_id UUID NOT NULL REFERENCES customers(id),building_id UUID NOT NULL REFERENCES buildings(id),room_number VARCHAR(120),subtotal_cents INTEGER NOT NULL CHECK (subtotal_cents >= 0),fee_cents INTEGER NOT NULL CHECK (fee_cents >= 0),total_cents INTEGER NOT NULL CHECK (total_cents >= 0),payment_method VARCHAR(20) NOT NULL DEFAULT 'cash' CHECK (payment_method IN ('cash','bank_transfer')),status VARCHAR(20) NOT NULL DEFAULT 'pending',accepted_by_staff_id UUID REFERENCES staff(id),accepted_at TIMESTAMPTZ,delivered_at TIMESTAMPTZ,cancelled_at TIMESTAMPTZ,cancel_reason VARCHAR(120),created_at TIMESTAMPTZ NOT NULL DEFAULT now(),updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_photo_data TEXT;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_photo_mime VARCHAR(40);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_photo_added_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status); CREATE INDEX IF NOT EXISTS idx_orders_created_at ON orders(created_at); CREATE INDEX IF NOT EXISTS idx_orders_customer ON orders(customer_id);
 DO $$ BEGIN ALTER TABLE orders DROP CONSTRAINT IF EXISTS orders_status_check; ALTER TABLE orders ADD CONSTRAINT orders_status_check CHECK (status IN ('pending','accepted','processing','ready','delivering','delivered','cancelled')); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 CREATE OR REPLACE FUNCTION set_updated_at() RETURNS TRIGGER AS $$ BEGIN NEW.updated_at = now(); RETURN NEW; END; $$ LANGUAGE plpgsql; DROP TRIGGER IF EXISTS trg_orders_updated_at ON orders; CREATE TRIGGER trg_orders_updated_at BEFORE UPDATE ON orders FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 CREATE TABLE IF NOT EXISTS order_items (id UUID PRIMARY KEY DEFAULT gen_random_uuid(),order_id UUID NOT NULL REFERENCES orders(id) ON DELETE CASCADE,menu_item_id UUID NOT NULL REFERENCES menu_items(id),item_name VARCHAR(150) NOT NULL,unit_price_cents INTEGER NOT NULL CHECK (unit_price_cents >= 0),quantity INTEGER NOT NULL CHECK (quantity > 0),line_total_cents INTEGER NOT NULL CHECK (line_total_cents >= 0)); CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id);
 CREATE TABLE IF NOT EXISTS staff_order_invites (id UUID PRIMARY KEY DEFAULT gen_random_uuid(),order_id UUID NOT NULL REFERENCES orders(id) ON DELETE CASCADE,staff_id UUID NOT NULL REFERENCES staff(id) ON DELETE CASCADE,token_hash TEXT NOT NULL UNIQUE,expires_at TIMESTAMPTZ NOT NULL,used_at TIMESTAMPTZ,created_at TIMESTAMPTZ NOT NULL DEFAULT now(),UNIQUE(order_id,staff_id)); CREATE INDEX IF NOT EXISTS idx_staff_order_invites_token ON staff_order_invites(token_hash);
 CREATE TABLE IF NOT EXISTS order_status_events (id UUID PRIMARY KEY DEFAULT gen_random_uuid(),order_id UUID NOT NULL REFERENCES orders(id) ON DELETE CASCADE,status VARCHAR(20) NOT NULL,changed_by_staff_id UUID REFERENCES staff(id),created_at TIMESTAMPTZ NOT NULL DEFAULT now()); CREATE INDEX IF NOT EXISTS idx_order_status_events_order ON order_status_events(order_id,created_at);
+
+CREATE TABLE IF NOT EXISTS password_reset_codes (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  customer_id UUID NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+  code_hash TEXT NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  used_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_password_reset_customer ON password_reset_codes(customer_id,created_at DESC);
+
+CREATE TABLE IF NOT EXISTS order_reviews (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  order_id UUID NOT NULL UNIQUE REFERENCES orders(id) ON DELETE CASCADE,
+  customer_id UUID NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+  rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+  comment VARCHAR(800),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_order_reviews_customer ON order_reviews(customer_id,created_at DESC);
+
 CREATE TABLE IF NOT EXISTS push_subscriptions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   customer_id UUID REFERENCES customers(id) ON DELETE CASCADE,
