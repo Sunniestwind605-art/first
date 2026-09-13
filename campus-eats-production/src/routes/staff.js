@@ -18,12 +18,26 @@ router.get('/orders',verifyToken,requireStaff(),async(req,res)=>{
     const status=req.query.status; const params=[]; let where='';
     if(status&&status!=='all'){if(!allowed.includes(status))return res.status(400).json({error:'Invalid status'});params.push(status);where='WHERE o.status=$1';}
     const r=await pool.query(`SELECT o.id,o.status,o.total_cents,o.payment_method,o.room_number,o.created_at,o.accepted_at,o.cancel_reason,
-      b.name building_name,c.full_name customer_name,c.phone customer_phone,s.full_name accepted_by_name
+      (o.delivery_photo_data IS NOT NULL) has_delivery_photo,
+      b.name building_name,c.full_name customer_name,c.phone customer_phone,s.full_name accepted_by_name,
+      rv.rating review_rating,rv.comment review_comment
       FROM orders o JOIN buildings b ON b.id=o.building_id JOIN customers c ON c.id=o.customer_id
-      LEFT JOIN staff s ON s.id=o.accepted_by_staff_id ${where}
+      LEFT JOIN staff s ON s.id=o.accepted_by_staff_id LEFT JOIN order_reviews rv ON rv.order_id=o.id ${where}
       ORDER BY o.created_at DESC LIMIT 100`,params);
     res.json({orders:await attachItems(r.rows)});
   }catch(e){console.error('staff list',e);res.status(500).json({error:'Failed to fetch orders'});}
+});
+
+router.get('/orders/:id/photo',verifyToken,requireStaff(),async(req,res)=>{
+  try{
+    const r=await pool.query(`SELECT delivery_photo_data,delivery_photo_mime FROM orders WHERE id=$1`,[req.params.id]);
+    if(!r.rowCount)return res.status(404).json({error:'Order not found'});
+    const row=r.rows[0];
+    if(!row.delivery_photo_data)return res.status(404).json({error:'No delivery photo for this order'});
+    res.setHeader('Content-Type',row.delivery_photo_mime||'image/jpeg');
+    res.setHeader('Cache-Control','private, max-age=300');
+    res.send(Buffer.from(row.delivery_photo_data,'base64'));
+  }catch(e){console.error('staff photo',e);res.status(500).json({error:'Could not load photo'});}
 });
 
 async function acceptOrder(orderId,staffId){
@@ -53,6 +67,7 @@ router.get('/invite/:token',async(req,res)=>{
   try{
     const hash=sha256(String(req.params.token||''));
     const r=await pool.query(`SELECT i.order_id,i.expires_at,i.used_at,st.full_name staff_name,o.status,o.total_cents,o.room_number,
+      (o.delivery_photo_data IS NOT NULL) has_delivery_photo,
       b.name building_name,c.full_name customer_name,s.full_name accepted_by_name
       FROM staff_order_invites i JOIN staff st ON st.id=i.staff_id JOIN orders o ON o.id=i.order_id
       JOIN buildings b ON b.id=o.building_id JOIN customers c ON c.id=o.customer_id
