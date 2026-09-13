@@ -8,6 +8,10 @@ async function applySchema() {
   if ((process.env.AUTO_MIGRATE || 'true').toLowerCase() !== 'true') return;
   const sql = fs.readFileSync(path.join(__dirname, '..', 'schema.sql'), 'utf8');
   await pool.query(sql);
+  const supportSchemaPath = path.join(__dirname, '..', 'support-schema.sql');
+  if (fs.existsSync(supportSchemaPath)) {
+    await pool.query(fs.readFileSync(supportSchemaPath, 'utf8'));
+  }
   console.log('[bootstrap] schema ready');
 }
 
