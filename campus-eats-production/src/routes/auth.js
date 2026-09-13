@@ -1,15 +1,26 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 const { pool } = require('../config/db');
 const { verifyToken, requireStaff } = require('../middleware/auth');
 const { normalizePhone } = require('../utils/whatsapp');
+const { sendToOwner } = require('../utils/push');
 
 const router = express.Router();
 const SALT_ROUNDS = 12;
+const RESET_TTL_MINUTES = 10;
+const RESET_MAX_ATTEMPTS = 5;
 
 function signToken(payload){ return jwt.sign(payload,process.env.JWT_SECRET,{expiresIn:process.env.JWT_EXPIRES_IN||'7d'}); }
 function validEmail(v){ return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v||'')); }
+function resetCodeHash(code){ return crypto.createHash('sha256').update(`${String(code)}:${process.env.JWT_SECRET}`).digest('hex'); }
+function sameHash(a,b){
+  try{
+    const aa=Buffer.from(String(a),'hex'),bb=Buffer.from(String(b),'hex');
+    return aa.length===bb.length&&crypto.timingSafeEqual(aa,bb);
+  }catch{return false;}
+}
 
 router.post('/register', async(req,res)=>{
   try{
@@ -46,6 +57,60 @@ router.post('/login', async(req,res)=>{
     delete account.password_hash; delete account.verification_code_hash;
     res.json({token:signToken(payload),[as]:account});
   }catch(e){ console.error('login',e); res.status(500).json({error:'Login failed'}); }
+});
+
+router.post('/forgot-password',async(req,res)=>{
+  const generic={ok:true,message:'If that account can receive Campus Eats notifications, a 6-digit reset code has been sent to its enrolled devices.'};
+  try{
+    const email=String(req.body.email||'').trim().toLowerCase();
+    if(!validEmail(email)) return res.json(generic);
+    const cr=await pool.query('SELECT id,full_name,email FROM customers WHERE lower(email)=lower($1)',[email]);
+    if(!cr.rowCount) return res.json(generic);
+    const customer=cr.rows[0];
+    const recent=await pool.query(`SELECT created_at FROM password_reset_codes WHERE customer_id=$1 ORDER BY created_at DESC LIMIT 1`,[customer.id]);
+    if(recent.rowCount&&Date.now()-new Date(recent.rows[0].created_at).getTime()<60000) return res.json(generic);
+    await pool.query(`UPDATE password_reset_codes SET used_at=COALESCE(used_at,now()) WHERE customer_id=$1 AND used_at IS NULL`,[customer.id]);
+    const code=String(crypto.randomInt(100000,1000000));
+    await pool.query(`INSERT INTO password_reset_codes(customer_id,code_hash,expires_at) VALUES($1,$2,now()+($3 || ' minutes')::interval)`,[customer.id,resetCodeHash(code),RESET_TTL_MINUTES]);
+    sendToOwner('customer',customer.id,{
+      title:'Campus Eats password reset',
+      body:`Your reset code is ${code}. It expires in ${RESET_TTL_MINUTES} minutes.`,
+      url:`/forgot-password.html?email=${encodeURIComponent(email)}`,
+      tag:'campus-eats-password-reset',
+      requireInteraction:true,
+      data:{type:'password-reset'}
+    }).catch(e=>console.error('password reset push',e));
+    res.json(generic);
+  }catch(e){console.error('forgot password',e);res.json(generic);}
+});
+
+router.post('/reset-password',async(req,res)=>{
+  try{
+    const email=String(req.body.email||'').trim().toLowerCase();
+    const code=String(req.body.code||'').trim();
+    const newPassword=String(req.body.newPassword||'');
+    if(!validEmail(email)||!/^\d{6}$/.test(code)||newPassword.length<8) return res.status(400).json({error:'Enter a valid email, 6-digit code and a password of at least 8 characters'});
+    const r=await pool.query(`SELECT pr.id,pr.code_hash,pr.attempts,c.id customer_id
+      FROM password_reset_codes pr JOIN customers c ON c.id=pr.customer_id
+      WHERE lower(c.email)=lower($1) AND pr.used_at IS NULL AND pr.expires_at>now()
+      ORDER BY pr.created_at DESC LIMIT 1`,[email]);
+    if(!r.rowCount) return res.status(400).json({error:'The reset code is invalid or has expired'});
+    const row=r.rows[0];
+    if(row.attempts>=RESET_MAX_ATTEMPTS) return res.status(429).json({error:'Too many incorrect attempts. Request a new reset code.'});
+    if(!sameHash(row.code_hash,resetCodeHash(code))){
+      await pool.query('UPDATE password_reset_codes SET attempts=attempts+1 WHERE id=$1',[row.id]);
+      return res.status(400).json({error:'The reset code is invalid or has expired'});
+    }
+    const hash=await bcrypt.hash(newPassword,SALT_ROUNDS);
+    const client=await pool.connect();
+    try{
+      await client.query('BEGIN');
+      await client.query('UPDATE customers SET password_hash=$1 WHERE id=$2',[hash,row.customer_id]);
+      await client.query('UPDATE password_reset_codes SET used_at=now() WHERE customer_id=$1 AND used_at IS NULL',[row.customer_id]);
+      await client.query('COMMIT');
+    }catch(e){await client.query('ROLLBACK');throw e;}finally{client.release();}
+    res.json({ok:true,message:'Password updated. You can sign in with your new password.'});
+  }catch(e){console.error('reset password',e);res.status(500).json({error:'Could not reset password'});}
 });
 
 router.post('/verify',(_req,res)=>res.status(410).json({error:'Email verification is disabled during the Web Push pilot'}));
