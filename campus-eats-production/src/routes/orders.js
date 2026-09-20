@@ -36,7 +36,7 @@ router.post('/',verifyToken,requireCustomer,async(req,res)=>{
       }
       const fee=Math.round(subtotal*SERVICE_FEE_PERCENT/100), total=subtotal+fee;
       const or=await client.query(`INSERT INTO orders(customer_id,building_id,room_number,subtotal_cents,fee_cents,total_cents,payment_method,status,delivery_photo_data,delivery_photo_mime,delivery_photo_added_at)
-        VALUES($1,$2,$3,$4,$5,$6,$7,'pending',$8,$9,CASE WHEN $8 IS NULL THEN NULL ELSE now() END) RETURNING *`,[req.user.id,buildingId,roomNumber||null,subtotal,fee,total,paymentMethod||'cash',photo?.data||null,photo?.mime||null]);
+        VALUES($1,$2,$3,$4,$5,$6,$7,'pending',$8::text,$9::varchar,CASE WHEN $8::text IS NULL THEN NULL ELSE now() END) RETURNING *`,[req.user.id,buildingId,roomNumber||null,subtotal,fee,total,paymentMethod||'cash',photo?.data||null,photo?.mime||null]);
       const o=or.rows[0];
       for(const l of lines){await client.query(`INSERT INTO order_items(order_id,menu_item_id,item_name,unit_price_cents,quantity,line_total_cents) VALUES($1,$2,$3,$4,$5,$6)`,[o.id,l.menuItemId,l.itemName,l.unitPriceCents,l.quantity,l.lineTotalCents]);}
       await client.query(`INSERT INTO order_status_events(order_id,status) VALUES($1,'pending')`,[o.id]);
